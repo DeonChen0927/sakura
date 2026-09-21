@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sakura · 本地工作台</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="#/review">
+        <span class="brand-mark" aria-hidden="true">S</span>
+        <span>Sakura<small>LOCAL WORKBENCH</small></span>
+      </a>
+      <p class="nav-label">功能区</p>
+      <nav id="nav" aria-label="主导航"></nav>
+      <div class="sidebar-note">
+        <span class="tiny-flower" aria-hidden="true">✿</span>
+        <strong>本机运行</strong>
+        <p>服务、配置与历史仅保存在本机；发布前始终需要人工确认。</p>
+      </div>
+      <div class="profile" id="profile"></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="breadcrumb" id="breadcrumb"></div>
+        <div id="mode-pill"></div>
+      </header>
+      <div id="app" aria-live="polite"></div>
+    </main>
+
+    <dialog id="publish-dialog"></dialog>
+    <div id="toast" hidden role="status"></div>
+
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>

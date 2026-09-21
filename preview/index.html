@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Sakura · PR 评审工作台 · 交互原型</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#reviews" aria-label="Sakura 首页"><span class="brand-mark" aria-hidden="true">s</span><span>sakura<small>YOUR REVIEW SPACE</small></span></a>
+    <div class="nav-label">工作空间</div>
+    <nav aria-label="主导航">
+      <button class="nav-item active" data-page="reviews"><span aria-hidden="true">▤</span>PR 评审<span class="nav-count">4</span></button>
+      <button class="nav-item" data-page="history"><span aria-hidden="true">◷</span>评审历史</button>
+      <button class="nav-item" data-page="settings"><span aria-hidden="true">⚙</span>连接设置</button>
+    </nav>
+    <div class="sidebar-note"><span class="tiny-flower" aria-hidden="true">✳</span><strong>专注值得关注的变化</strong><p>AI 帮你发现问题。<br>最后的决定，交给你。</p></div>
+    <div class="profile"><span class="avatar">本</span><div><strong>本机使用者</strong><small>本机个人工作台</small></div></div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div class="breadcrumb">工作空间 <span>/</span> <strong id="page-name">PR 评审</strong></div><span class="pill demo">交互原型 · 无真实连接</span></header>
+    <div id="app"></div>
+  </main>
+  <dialog id="publish-dialog" aria-labelledby="publish-title">
+    <form id="publish-form">
+      <div class="dialog-heading"><div><span class="eyebrow">ONE LAST LOOK</span><h2 id="publish-title">确认你的评审意见</h2></div><button type="button" class="icon-button" id="close-dialog" aria-label="关闭发布预览">×</button></div>
+      <div id="publish-context" class="dialog-context"></div>
+      <div class="dialog-scroll">
+        <div class="notice neutral">这是交互演示。以下为确认后拟发布的内容及署名，不代表已审核发布；不会发送至 Bitbucket。</div>
+        <label class="field-label" for="review-summary">英文总结 / 修改理由 <span>可编辑</span></label>
+        <textarea id="review-summary" rows="3" placeholder="Optional review summary in English"></textarea>
+        <div class="section-heading"><h3>将发布的英文评论</h3><span id="publish-count" class="muted"></span></div>
+        <div id="publish-comments"></div>
+        <fieldset class="action-choices"><legend>选择最终评审动作 <span>不会替你决定</span></legend>
+          <label><input type="radio" name="decision" value="approve"><span><strong>Approve</strong><small>批准这个 PR</small></span></label>
+          <label><input type="radio" name="decision" value="changes"><span><strong>Request changes</strong><small>请求作者修改</small></span></label>
+          <label><input type="radio" name="decision" value="comment"><span><strong>仅评论</strong><small>保留现有评审状态</small></span></label>
+        </fieldset>
+        <div id="override-area" hidden><label class="field-label" for="override-reason">AI 建议请求修改：请填写英文批准理由</label><textarea id="override-reason" rows="2" placeholder="Explain why approving is appropriate despite the findings."></textarea><p class="help">此理由会加入英文总结。该保护规则仍待你审阅。</p></div>
+        <div class="section-heading"><h3>总结最终预览</h3><span class="muted">含覆盖理由与固定 AI 署名</span></div>
+        <div id="publish-summary-preview"></div>
+        <p id="publish-error" class="validation" role="status"></p>
+      </div>
+      <footer class="dialog-footer"><button type="button" class="button" id="cancel-dialog">返回编辑</button><button type="submit" class="button primary" id="confirm-publish" disabled>请选择评审动作</button></footer>
+    </form>
+  </dialog>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

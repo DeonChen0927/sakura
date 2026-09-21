@@ -1,0 +1,28 @@
+# 本机数据目录：凭据、数据库、仓库缓存、日志全部在这里，绝不能进版本库
+data/
+**/data/secrets/
+secrets/
+
+# 凭据与密钥
+*.key
+*.pem
+*.pfx
+credentials.json
+.env
+.env.*
+
+# 本地数据库（含 PR 标题、描述、diff 原文与 Jira 内容）
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# 日志
+*.log
+logs/
+
+# 依赖与临时文件
+node_modules/
+tmp_*.mjs
+*.tmp
