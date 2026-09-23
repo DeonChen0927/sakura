@@ -77,6 +77,22 @@ const isMain =
 
 if (isMain) {
   const server = createServer();
+  /**
+   * 端口被占用是最常见的「启动失败」，八成是上一个实例还在跑（Sakura 本就只应有一个本地实例）。
+   * 默认的 EADDRINUSE 会抛一整屏 Node 栈，看不出该怎么办，所以这里换成可执行的提示。
+   */
+  server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+      logger.error(
+        `端口 ${config.port} 已被占用，Sakura 未启动。` +
+          `多半是已有一个实例在运行，直接访问 http://${config.host}:${config.port} 即可；` +
+          '若要换端口，用 SAKURA_PORT=其它端口 启动。' +
+          `查占用进程：PowerShell 执行 Get-NetTCPConnection -LocalPort ${config.port} -State Listen`,
+      );
+      process.exit(1);
+    }
+    throw error;
+  });
   server.listen(config.port, config.host, () => {
     logger.info(`Sakura 本地服务已启动：http://${config.host}:${config.port}（模式 ${config.integrationMode}）`);
   });

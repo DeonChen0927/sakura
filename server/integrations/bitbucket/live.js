@@ -24,6 +24,12 @@ export function createLiveBitbucketClient({
 } = {}) {
   const base = (apiBase || DEFAULT_API_BASE).replace(/\/$/, '');
   const auth = createAuthResolver({ label: 'Bitbucket', authScheme, email });
+  /**
+   * 当前身份在一次进程生命周期内是稳定的，但刷新列表、读 PR 详情、发布评论都要用它。
+   * 不缓存的话每个操作都要多一次 /user 往返；凭据或连接设置变更时 registry 会重建客户端，
+   * 缓存随之失效，不会拿着旧身份继续用。
+   */
+  let currentUserPromise = null;
 
   async function request(pathname, { method = 'GET', body, query, accept = 'json' } = {}) {
     const url = new URL(`${base}${pathname}`);
@@ -129,40 +135,70 @@ export function createLiveBitbucketClient({
     mode: 'live',
 
     async testConnection() {
-      const user = await this.getCurrentUser();
+      // 连接测试必须真的打一次网络请求，不能拿缓存身份冒充成功。
+      const user = await this.getCurrentUser({ refresh: true });
       return { ok: true, demo: false, detail: `已连接 Bitbucket，当前身份 ${user.displayName}` };
     },
 
-    async getCurrentUser() {
-      const user = await request('/user');
-      return {
-        id: user.uuid,
-        accountId: user.account_id,
-        displayName: user.display_name,
-        nickname: user.nickname,
-      };
+    async getCurrentUser({ refresh = false } = {}) {
+      if (refresh || !currentUserPromise) {
+        currentUserPromise = request('/user').then(
+          (user) => ({
+            id: user.uuid,
+            accountId: user.account_id,
+            displayName: user.display_name,
+            nickname: user.nickname,
+          }),
+          (error) => {
+            currentUserPromise = null;
+            throw error;
+          },
+        );
+      }
+      return currentUserPromise;
     },
 
-    /** 用 API 返回的稳定用户标识匹配评审人，不依赖显示名（FR-01 / AC01）。 */
+    /**
+     * 「待我评审」列表（FR-01 / AC01）：用 API 返回的稳定用户标识匹配评审人，不依赖显示名。
+     *
+     * 过滤必须放在服务端：仓库里的 OPEN PR 动辄数百个，全量翻页再本地筛选
+     * 会拉回几十倍于所需的数据，刷新自然慢。这里用 BBQL 让 Bitbucket 只返回
+     * 「我是评审人且未关闭」的 PR，通常一页就够。
+     *
+     * 字段也显式裁剪：默认响应会带上 rendered HTML、头像链接、各种 self link，
+     * 列表一个都用不到。注意 fields 语义——一旦出现不带 + 前缀的字段名，
+     * Bitbucket 会切换成「仅返回这些字段」，所以下面必须把 id 在内的所有字段列全，
+     * 并保留 next 才能继续翻页。
+     */
     async listPullRequestsForReview({ repository }) {
       const user = await this.getCurrentUser();
       // 页面的 state=OPEN+DRAFT 与 API 参数并非一一对应：Draft 仍属于 OPEN，
       // 由 draft 字段区分，因此统一按 OPEN 查询后再按设置过滤（第 9 章待验证项）。
       const values = await paginate(`/repositories/${repository}/pullrequests`, {
-        // 只能用 + 前缀做「追加字段」：一旦混入不带前缀的字段名，
-        // Bitbucket 会切换成「仅返回这些字段」，连 id 都会丢失。
-        fields:
-          '+values.participants,+values.reviewers,+values.draft,+values.source.commit.hash,+values.destination.commit.hash',
-        state: 'OPEN',
+        q: `state="OPEN" AND reviewers.uuid="${user.id}"`,
+        fields: [
+          'next',
+          'values.id',
+          'values.title',
+          'values.description',
+          'values.state',
+          'values.draft',
+          'values.updated_on',
+          'values.author.uuid',
+          'values.author.display_name',
+          'values.source.branch.name',
+          'values.source.commit.hash',
+          'values.destination.branch.name',
+          'values.destination.commit.hash',
+          'values.links.html.href',
+          // 我这一轮的表态只能从 participants 读；只取判定所需的三个字段。
+          'values.participants.user.uuid',
+          'values.participants.role',
+          'values.participants.state',
+        ].join(','),
       });
       return values
         .filter((pr) => includeDrafts || !pr.draft)
-        .filter((pr) =>
-          (pr.reviewers ?? []).some((reviewer) => reviewer.uuid === user.id) ||
-          (pr.participants ?? []).some(
-            (participant) => participant.user?.uuid === user.id && participant.role === 'REVIEWER',
-          ),
-        )
         .map((pr) => {
           const participant = (pr.participants ?? []).find((item) => item.user?.uuid === user.id);
           return {

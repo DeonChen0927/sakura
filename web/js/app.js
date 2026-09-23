@@ -113,18 +113,10 @@ function bindShortcuts() {
   });
 }
 
-/** 重新聚焦只提示数据可能过期，不后台自动启动 AI（FR-02）。 */
-function bindFocusHint() {
-  window.addEventListener('focus', () => {
-    if (state.prs.syncedAt && !state.staleHint) update({ staleHint: true });
-  });
-}
-
 subscribe(render);
 window.addEventListener('hashchange', applyHash);
 
 applyHash();
 bindShortcuts();
-bindFocusHint();
 render();
 actions.bootstrap();

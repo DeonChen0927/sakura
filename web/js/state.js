@@ -23,7 +23,6 @@ export const state = {
   models: null,
   identities: null,
   gitCache: null,
-  staleHint: false,
   loading: false,
   error: null,
 };
@@ -86,7 +85,7 @@ export const actions = {
     update({ loading: true });
     try {
       const prs = await api.syncPrs();
-      update({ prs, loading: false, staleHint: false });
+      update({ prs, loading: false });
       toast(`已刷新 ${prs.items.length} 个待评审 PR`);
     } catch (error) {
       update({ loading: false });

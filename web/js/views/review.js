@@ -905,18 +905,6 @@ export function renderReviewPage() {
       ),
     ),
     renderSummaryRow(state.prs.items),
-    state.staleHint
-      ? notice(
-          'warning',
-          h('strong', {}, '数据可能已过期：'),
-          '你刚刚切回本页，列表不会后台自动刷新，也不会自动发起 AI 评审。',
-          h(
-            'button',
-            { class: 'button small', type: 'button', onclick: () => actions.syncPrs() },
-            '立即刷新',
-          ),
-        )
-      : null,
     h('div', { class: 'workspace' }, renderPrList(state.prs.items), renderWorkspace()),
   );
 }
