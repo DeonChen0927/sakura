@@ -22,6 +22,7 @@ export function createMockBitbucketClient() {
     title: pr.title,
     description: pr.description,
     author: pr.author,
+    authoredByMe: pr.author?.id === MOCK_USER.id,
     sourceBranch: pr.sourceBranch,
     targetBranch: pr.targetBranch,
     sourceCommit: pr.sourceCommit,
@@ -47,10 +48,15 @@ export function createMockBitbucketClient() {
       return { ...MOCK_USER, demo: true };
     },
 
+    /** 与真实适配器一致：我评审的 + 我发起的，两类都要列出。 */
     async listPullRequestsForReview({ repository }) {
       const user = await this.getCurrentUser();
       return state
-        .filter((pr) => pr.repository === repository && pr.reviewers.includes(user.id))
+        .filter(
+          (pr) =>
+            pr.repository === repository &&
+            (pr.reviewers.includes(user.id) || pr.author?.id === user.id),
+        )
         .map(toSummary);
     },
 

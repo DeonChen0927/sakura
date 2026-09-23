@@ -13,6 +13,7 @@ export const SettingKey = {
   DRAFT_POLICY: 'review.draftPolicy',
   MANUAL_JIRA_KEYS: 'review.manualJiraKeys',
   GIT_CACHE: 'review.gitCache',
+  TEAM_ROSTER: 'review.teamRoster',
 };
 
 const DEFAULTS = {
@@ -42,6 +43,11 @@ const DEFAULTS = {
     // 不 fetch、不 checkout、不改动该目录的任何状态。留空表示只用网络缓存。
     localSourcePath: '',
   },
+  /**
+   * Team Seal 成员名单（EI-monorepo 的 teams.yaml）。
+   * path 留空时自动取上面的本机仓库路径 + teams.yaml，避免重复填同一个目录。
+   */
+  [SettingKey.TEAM_ROSTER]: { path: '', team: 'Seal' },
 };
 
 /**

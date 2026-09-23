@@ -177,16 +177,50 @@ function matchEntry(entry, files) {
 /** 范围识别失败时的回退：评审本 PR 的全部变更，并标明不是 Team Seal 范围。 */
 export const ScopeFallback = { ALL_CHANGES: 'all_changes' };
 
+/**
+ * 按作者身份直接整份评审的策略（不是回退，是规则）：
+ * - author_is_me：我自己发起的 PR，需要整份自查
+ * - author_in_team：Team Seal 成员发起的 PR，本团队对自己的改动负全责
+ * 两者都不看 Codeowner Bot 的 Seal 范围标记 —— 那个标记是给「外部改动」划范围的。
+ */
+export const ScopePolicy = {
+  TEAM_SCOPE: 'team_scope',
+  AUTHOR_IS_ME: 'author_is_me',
+  AUTHOR_IN_TEAM: 'author_in_team',
+};
+
 function fallbackScope({ markerLine = null, origin = null, entries = [], changedFiles, warnings }) {
   const allPaths = changedFiles.map((file) => file.path).sort();
   return {
     ok: true,
+    policy: ScopePolicy.TEAM_SCOPE,
     fallback: ScopeFallback.ALL_CHANGES,
     marker: SCOPE_MARKER,
     markerLine,
     origin,
     entries,
     inScopeFiles: allPaths,
+    outOfScopeFiles: [],
+    warnings,
+    blockers: [],
+  };
+}
+
+/**
+ * 作者归属决定的整份评审范围。与 fallbackScope 形状一致，但 fallback 为 null：
+ * 这不是「没找到标记只好全评」，而是规则本就要求全评，两者在报告与提示词里必须分得开。
+ */
+export function resolveFullChangeScope(changedFiles = [], { policy, reason, warnings = [] } = {}) {
+  return {
+    ok: true,
+    policy,
+    reason,
+    fallback: null,
+    marker: SCOPE_MARKER,
+    markerLine: null,
+    origin: null,
+    entries: [],
+    inScopeFiles: changedFiles.map((file) => file.path).sort(),
     outOfScopeFiles: [],
     warnings,
     blockers: [],
@@ -278,6 +312,7 @@ export function resolveTeamSealScope(sources, changedFiles = []) {
 
   return {
     ok: true,
+    policy: ScopePolicy.TEAM_SCOPE,
     fallback: null,
     marker: SCOPE_MARKER,
     markerLine: block.markerLine,

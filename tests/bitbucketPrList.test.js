@@ -27,7 +27,7 @@ const prPayload = (id) => ({
   state: 'OPEN',
   draft: false,
   updated_on: '2026-01-01T00:00:00Z',
-  author: { uuid: '{someone}', display_name: 'Someone' },
+  author: { uuid: '{someone}', account_id: 'acc-other', display_name: 'Someone' },
   source: { branch: { name: 'feat' }, commit: { hash: 'aaa' } },
   destination: { branch: { name: 'main' }, commit: { hash: 'bbb' } },
   links: { html: { href: `https://bitbucket.org/pr/${id}` } },
@@ -37,7 +37,7 @@ const prPayload = (id) => ({
 const client = () =>
   createLiveBitbucketClient({ getToken: async () => 'token', authScheme: 'bearer' });
 
-test('待我评审列表在服务端过滤，不拉取全仓库 OPEN PR', async () => {
+test('列表在服务端过滤：我评审的 + 我发起的，不拉取全仓库 OPEN PR', async () => {
   const stub = stubFetch((url) => (url.pathname === '/2.0/user'
     ? USER
     : { values: [prPayload(1)], next: null }));
@@ -46,12 +46,34 @@ test('待我评审列表在服务端过滤，不拉取全仓库 OPEN PR', async 
     assert.equal(list.length, 1);
 
     const query = stub.calls[1].searchParams;
-    assert.equal(query.get('q'), 'state="OPEN" AND reviewers.uuid="{deon}"');
+    assert.equal(
+      query.get('q'),
+      'state="OPEN" AND (reviewers.uuid="{deon}" OR author.uuid="{deon}")',
+    );
     // 字段白名单：必须显式带上 id 与 next，否则会丢数据或无法翻页。
     const fields = query.get('fields').split(',');
     assert.ok(fields.includes('next'));
     assert.ok(fields.includes('values.id'));
+    // teams.yaml 用 account_id 匹配成员，缺了它就无法判断发起人是否属于团队。
+    assert.ok(fields.includes('values.author.account_id'));
     assert.ok(!fields.some((field) => field.startsWith('+')));
+  } finally {
+    stub.restore();
+  }
+});
+
+test('我发起的 PR 被标记 authoredByMe，并带出作者 account_id', async () => {
+  const mine = { ...prPayload(7), author: { uuid: '{deon}', account_id: 'acc-1', display_name: 'Deon Chen' } };
+  const stub = stubFetch((url) => (url.pathname === '/2.0/user'
+    ? USER
+    : { values: [mine, prPayload(8)], next: null }));
+  try {
+    const list = await client().listPullRequestsForReview({ repository: 'ws/repo' });
+    const [own, other] = list;
+    assert.equal(own.authoredByMe, true);
+    assert.equal(own.author.accountId, 'acc-1');
+    assert.equal(other.authoredByMe, false);
+    assert.equal(other.author.accountId, 'acc-other');
   } finally {
     stub.restore();
   }

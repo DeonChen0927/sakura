@@ -209,13 +209,21 @@ function originLabel(origin) {
   return origin;
 }
 
+const SCOPE_POLICY_PILL = {
+  author_is_me: ['你发起的 PR：评审全部', 'pink'],
+  author_in_team: ['团队成员发起：评审全部', 'pink'],
+};
+
 function renderScopeStrip(preflight) {
   const scope = preflight.scope;
   const items = [];
+  const policy = SCOPE_POLICY_PILL[scope.policy];
   items.push(
-    scope.fallback
-      ? pill(`未识别 Team Seal 范围：评审全部 ${scope.inScopeFiles.length} 个变更文件`, 'amber')
-      : pill(`Team Seal 范围：${scope.inScopeFiles.length} 个文件`, 'green'),
+    policy
+      ? pill(`${policy[0]} ${scope.inScopeFiles.length} 个变更文件`, policy[1])
+      : scope.fallback
+        ? pill(`未识别 Team Seal 范围：评审全部 ${scope.inScopeFiles.length} 个变更文件`, 'amber')
+        : pill(`Team Seal 范围：${scope.inScopeFiles.length} 个文件`, 'green'),
   );
   const jiraOk = preflight.jiraCheck.ok;
   const noCriteria = (preflight.warnings ?? []).some((item) => item.code === 'jira_acceptance_missing');
@@ -249,7 +257,9 @@ function renderScopeEvidence(scope) {
     'div',
     { class: 'content-card' },
     h('h3', {}, '范围识别依据'),
-    scope.fallback
+    scope.reason
+      ? h('p', { class: 'muted' }, scope.reason)
+      : scope.fallback
       ? h(
           'p',
           { class: 'muted' },

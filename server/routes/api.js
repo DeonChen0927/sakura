@@ -2,6 +2,7 @@ import { Router, readJsonBody, sendJson } from '../lib/http.js';
 import { connectionService } from '../services/connectionService.js';
 import { settingsService } from '../services/settingsService.js';
 import { prService } from '../services/prService.js';
+import { teamRosterService } from '../services/teamRosterService.js';
 import { reviewService } from '../services/reviewService.js';
 import { publishService } from '../services/publishService.js';
 import { gitCacheService } from '../services/gitCacheService.js';
@@ -64,6 +65,7 @@ export function createApiRouter() {
   router.put('/api/settings', async (req, res) => {
     const body = await readJsonBody(req);
     settingsService.set(body.key, body.value);
+    teamRosterService.invalidate();
     resetClients();
     sendJson(res, 200, await connectionService.status());
   });

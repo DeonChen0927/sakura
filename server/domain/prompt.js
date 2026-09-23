@@ -46,9 +46,16 @@ export function buildReviewPrompt(payload) {
   );
 
   // 范围标记缺失时按全部变更评审，必须在提示词里说清楚，不能让模型以为这是 Team Seal 范围。
-  const scopeHeading = scope.fallback
-    ? '评审范围（本 PR 未找到 Team Seal 范围标记，本轮评审全部变更文件）：'
-    : '评审范围（只有这些文件内的变更可以产生正式发现）：';
+  // 作者归属决定的整份评审同样要说明：那是规则要求，不是「没找到标记」。
+  const SCOPE_HEADING = {
+    author_is_me: '评审范围（本 PR 由你本人发起，按规则评审全部变更文件）：',
+    author_in_team: '评审范围（本 PR 由本团队成员发起，按规则评审全部变更文件）：',
+  };
+  const scopeHeading =
+    SCOPE_HEADING[scope.policy] ??
+    (scope.fallback
+      ? '评审范围（本 PR 未找到 Team Seal 范围标记，本轮评审全部变更文件）：'
+      : '评审范围（只有这些文件内的变更可以产生正式发现）：');
 
   const criteriaSection = criteria.length
     ? `验收标准（必须逐条核对）：\n${criteria.map((item) => `- ${item}`).join('\n')}`

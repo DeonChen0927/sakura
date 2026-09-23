@@ -4,7 +4,8 @@ import { roundRepo, RoundStatus } from '../db/repositories/roundRepo.js';
 import { publishRepo } from '../db/repositories/publishRepo.js';
 import { settingsService, SettingKey } from './settingsService.js';
 import { auditRepo } from '../db/repositories/auditRepo.js';
-import { resolveTeamSealScope } from '../domain/teamSeal.js';
+import { resolveTeamSealScope, resolveFullChangeScope, ScopePolicy } from '../domain/teamSeal.js';
+import { teamRosterService } from './teamRosterService.js';
 import { gitCacheService } from './gitCacheService.js';
 import { extractJiraKeys, validateJiraSnapshot, jiraFingerprintParts } from '../domain/jira.js';
 import { diffStats } from '../domain/diff.js';
@@ -143,30 +144,7 @@ export const prService = {
     this.closeRoundsSettledRemotely(pr);
 
     const diffFiles = await loadDiff(clients, pr.repository, pr.number, pr.sourceCommit);
-    // Team Seal 范围标记由 Codeowner Bot 发在评论里，PR 描述经常是空的，
-    // 因此描述与评论都要作为来源（FR-03）。评论读取失败不能静默当成「没有标记」。
-    let comments = [];
-    let commentsError = null;
-    try {
-      comments = await clients.bitbucket.listComments({
-        repository: pr.repository,
-        number: pr.number,
-      });
-    } catch (error) {
-      commentsError = error.message;
-    }
-    const scopeSources = [
-      { text: pr.description, origin: 'description' },
-      ...comments.map((comment) => ({ text: comment.body, origin: `comment:${comment.id}` })),
-    ];
-    const scope = resolveTeamSealScope(scopeSources, diffFiles);
-    if (commentsError && scope.fallback) {
-      scope.warnings.push({
-        code: 'scope_comments_unavailable',
-        message: `无法读取 PR 评论，可能因此漏掉 Team Seal 范围标记：${commentsError}`,
-        remedy: '请确认令牌具备读取 PR 评论的权限后重试。',
-      });
-    }
+    const scope = await this.resolveScope(clients, pr, diffFiles);
 
     const candidates = extractJiraKeys(pr, [
       ...settingsService.manualJiraKeys(pr.id),
@@ -206,7 +184,8 @@ export const prService = {
     if (pr.remoteMissing) {
       blockers.push({
         code: 'not_my_review',
-        message: 'Bitbucket 已不再把该 PR 列为待你评审（可能已合并、已关闭，或你已被移出评审人）。',
+        message:
+          'Bitbucket 已不再把该 PR 列为待你评审、也不再由你发起（可能已合并、已关闭，或你已被移出评审人）。',
         remedy: '请刷新列表确认；本地保留这条记录只是为了查看历史。',
       });
     }
@@ -262,6 +241,77 @@ export const prService = {
         jira: jiraFingerprintParts(jiraSnapshot),
       }),
     };
+  },
+
+  /**
+   * 评审范围（FR-03）。先判作者归属，再谈 Team Seal 范围标记：
+   *
+   * - 我自己发起的 PR、以及 Team Seal 成员发起的 PR → 整份评审全部变更文件。
+   *   Codeowner Bot 的 Seal 范围标记是给「别的团队改到我们代码」划的界，
+   *   用它来限制本团队自己的 PR 会把大部分改动排除在评审之外，属于漏评。
+   * - 其余 PR 才按标记划定的 Seal 范围评审。
+   *
+   * 名单读不到时不阻断，按原有 Seal 范围评审，并明确警告名单不可用 ——
+   * 不静默假装「作者不是成员」，否则漏评了也看不出来。
+   */
+  async resolveScope(clients, pr, diffFiles) {
+    if (pr.authoredByMe) {
+      return resolveFullChangeScope(diffFiles, {
+        policy: ScopePolicy.AUTHOR_IS_ME,
+        reason: '这是你本人发起的 PR，按全部变更文件评审，不套用 Team Seal 范围。',
+      });
+    }
+
+    const rosterWarnings = [];
+    const lookup = teamRosterService.isMember(pr.author?.accountId);
+    if (lookup.member) {
+      return resolveFullChangeScope(diffFiles, {
+        policy: ScopePolicy.AUTHOR_IN_TEAM,
+        reason: `发起人 ${lookup.member.name ?? pr.author?.name ?? '未知'} 属于 ${lookup.roster.team} 团队，按全部变更文件评审，不套用 Team Seal 范围。`,
+      });
+    }
+    if (!lookup.ok) {
+      rosterWarnings.push({
+        code: 'team_roster_unavailable',
+        message: `无法读取 ${teamRosterService.teamName()} 团队名单，因此无法确认发起人是否为团队成员：${lookup.roster.detail}`,
+        remedy:
+          lookup.roster.remedy ??
+          '本轮按 Team Seal 范围评审；若发起人其实是团队成员，评审范围会偏小，请修好名单后重新开始。',
+      });
+    } else if (!pr.author?.accountId) {
+      rosterWarnings.push({
+        code: 'team_roster_author_unknown',
+        message: '这条 PR 快照里没有发起人的 Bitbucket account_id，无法与团队名单比对。',
+        remedy: '请刷新列表重新同步该 PR；旧版本保存的快照不含该字段。',
+      });
+    }
+
+    // Team Seal 范围标记由 Codeowner Bot 发在评论里，PR 描述经常是空的，
+    // 因此描述与评论都要作为来源。评论读取失败不能静默当成「没有标记」。
+    let comments = [];
+    let commentsError = null;
+    try {
+      comments = await clients.bitbucket.listComments({
+        repository: pr.repository,
+        number: pr.number,
+      });
+    } catch (error) {
+      commentsError = error.message;
+    }
+    const scopeSources = [
+      { text: pr.description, origin: 'description' },
+      ...comments.map((comment) => ({ text: comment.body, origin: `comment:${comment.id}` })),
+    ];
+    const scope = resolveTeamSealScope(scopeSources, diffFiles);
+    if (commentsError && scope.fallback) {
+      scope.warnings.push({
+        code: 'scope_comments_unavailable',
+        message: `无法读取 PR 评论，可能因此漏掉 Team Seal 范围标记：${commentsError}`,
+        remedy: '请确认令牌具备读取 PR 评论的权限后重试。',
+      });
+    }
+    scope.warnings.unshift(...rosterWarnings);
+    return scope;
   },
 
   async diff(prId) {

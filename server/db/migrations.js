@@ -179,4 +179,14 @@ export const migrations = [
       UPDATE pull_requests SET archived_at = remote_missing_at WHERE remote_missing = 1;
     `,
   },
+  {
+    // 由我本人、或 Team Seal 成员发起的 PR 要整份评审（不按 Seal 范围），
+    // 因此必须持久化作者的 Bitbucket account_id —— teams.yaml 用的就是这个标识，
+    // 与 PR 里的 uuid 不是同一个东西，不能互相替代。
+    id: '005-pr-author-account',
+    sql: `
+      ALTER TABLE pull_requests ADD COLUMN author_account_id TEXT;
+      ALTER TABLE pull_requests ADD COLUMN authored_by_me INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];

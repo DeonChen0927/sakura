@@ -1,6 +1,7 @@
 import { getClients, CredentialName } from '../integrations/registry.js';
 import { credentialStore, credentialBackend } from '../security/credentialStore.js';
 import { settingsService, SettingKey } from './settingsService.js';
+import { teamRosterService } from './teamRosterService.js';
 import { auditRepo } from '../db/repositories/auditRepo.js';
 import { AppError, ErrorKind } from '../lib/errors.js';
 import { config } from '../config.js';
@@ -37,6 +38,16 @@ export const connectionService = {
       reviewModel: model,
       defaultModel: config.defaultModel,
       draftPolicy: settingsService.get(SettingKey.DRAFT_POLICY),
+      // 名单决定哪些 PR 整份评审，读不到必须在设置页直接看见，而不是等到前置检查才发现。
+      teamRoster: (() => {
+        const roster = teamRosterService.load();
+        return {
+          ...roster,
+          settings: settingsService.get(SettingKey.TEAM_ROSTER),
+          memberCount: roster.members.length,
+          members: undefined,
+        };
+      })(),
     };
   },
 

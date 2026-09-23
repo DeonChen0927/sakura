@@ -506,6 +506,76 @@ function bitbucketCard(connection) {
   );
 }
 
+function teamRosterCard(connection) {
+  // 后端没返回这个字段 = 服务进程比前端旧（改完代码没重启）。
+  // 这和「名单读不到」是两回事，必须分开说：否则会照着提示去查 teams.yaml，
+  // 而文件其实完全正常，白查一轮。
+  if (!connection.teamRoster) {
+    return h(
+      'section',
+      { class: 'content-card' },
+      h('h2', {}, '团队名单'),
+      notice(
+        'warning',
+        h('strong', {}, '后端版本过旧：'),
+        '当前运行的 Sakura 服务进程还不支持团队名单（接口未返回该字段），因此无法显示或修改配置。请重启本地服务（Ctrl+C 后重新 npm start）。',
+      ),
+    );
+  }
+
+  const roster = connection.teamRoster;
+  const settings = roster.settings ?? { path: '', team: 'Seal' };
+  const save = async (patch) => {
+    await api.saveSetting('review.teamRoster', { ...settings, ...patch });
+    toast('团队名单配置已保存');
+    await reload();
+  };
+
+  return h(
+    'section',
+    { class: 'content-card' },
+    h('h2', {}, '团队名单'),
+    h(
+      'p',
+      { class: 'muted' },
+      '由你本人、或名单中的团队成员发起的 PR，一律按全部变更文件评审，不套用 Codeowner Bot 的 Team Seal 范围——那个范围是给外部团队的改动划界的。',
+    ),
+    h(
+      'label',
+      { class: 'field-label' },
+      'teams.yaml 路径',
+      h('span', {}, '留空则取「本地 Git 缓存」里填的本机仓库路径 + teams.yaml'),
+    ),
+    h('input', {
+      class: 'search',
+      value: settings.path ?? '',
+      placeholder: 'D:\\dev\\ei-monorepo\\teams.yaml',
+      'aria-label': 'teams.yaml 路径',
+      onchange: (event) => save({ path: event.target.value.trim() }),
+    }),
+    h('label', { class: 'field-label' }, '团队名称'),
+    h('input', {
+      class: 'search',
+      value: settings.team ?? 'Seal',
+      placeholder: 'Seal',
+      'aria-label': '团队名称',
+      onchange: (event) => save({ team: event.target.value.trim() }),
+    }),
+    roster.ok
+      ? notice(
+          'neutral',
+          h('strong', {}, `${roster.team} 团队名单可用：`),
+          `${roster.memberCount} 名成员 · ${roster.path}`,
+        )
+      : notice(
+          'warning',
+          h('strong', {}, '名单不可用：'),
+          `${roster.detail ?? '后端没有给出原因，请查看本地服务日志。'}${roster.remedy ? ` ${roster.remedy}` : ''}`,
+          ' 此时团队成员发起的 PR 会退回按 Team Seal 范围评审，评审范围可能偏小。',
+        ),
+  );
+}
+
 export function renderSettingsPage() {
   const connection = state.connection;
   if (!connection) return h('p', { class: 'muted' }, '正在读取连接状态…');
@@ -535,6 +605,7 @@ export function renderSettingsPage() {
       modelCard(connection),
       credentialCard(connection),
       gitCacheCard(),
+      teamRosterCard(connection),
     ),
   );
 }

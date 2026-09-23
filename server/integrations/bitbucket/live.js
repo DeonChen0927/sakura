@@ -115,12 +115,18 @@ export function createLiveBitbucketClient({
     return values;
   }
 
-  const mapPr = (repository, pr) => ({
+  const mapPr = (repository, pr, currentUser = null) => ({
     repository,
     number: pr.id,
     title: pr.title,
     description: pr.description ?? '',
-    author: { id: pr.author?.uuid ?? null, name: pr.author?.display_name ?? null },
+    author: {
+      id: pr.author?.uuid ?? null,
+      // teams.yaml 用 account_id 标识成员，与 uuid 不通用，必须单独带出来。
+      accountId: pr.author?.account_id ?? null,
+      name: pr.author?.display_name ?? null,
+    },
+    authoredByMe: Boolean(currentUser && pr.author?.uuid && pr.author.uuid === currentUser.id),
     sourceBranch: pr.source?.branch?.name ?? null,
     targetBranch: pr.destination?.branch?.name ?? null,
     sourceCommit: pr.source?.commit?.hash ?? null,
@@ -159,11 +165,12 @@ export function createLiveBitbucketClient({
     },
 
     /**
-     * 「待我评审」列表（FR-01 / AC01）：用 API 返回的稳定用户标识匹配评审人，不依赖显示名。
+     * 工作台列表（FR-01 / FR-02）：两类 PR 都要列出 ——
+     * ①我被选为评审人的；②我自己发起的（自己的 PR 需要整份自查，不按 Seal 范围）。
+     * 用 BBQL 的 OR 合并成一次查询，不要拆成两次请求再本地去重。
      *
      * 过滤必须放在服务端：仓库里的 OPEN PR 动辄数百个，全量翻页再本地筛选
-     * 会拉回几十倍于所需的数据，刷新自然慢。这里用 BBQL 让 Bitbucket 只返回
-     * 「我是评审人且未关闭」的 PR，通常一页就够。
+     * 会拉回几十倍于所需的数据，刷新自然慢。
      *
      * 字段也显式裁剪：默认响应会带上 rendered HTML、头像链接、各种 self link，
      * 列表一个都用不到。注意 fields 语义——一旦出现不带 + 前缀的字段名，
@@ -175,7 +182,7 @@ export function createLiveBitbucketClient({
       // 页面的 state=OPEN+DRAFT 与 API 参数并非一一对应：Draft 仍属于 OPEN，
       // 由 draft 字段区分，因此统一按 OPEN 查询后再按设置过滤（第 9 章待验证项）。
       const values = await paginate(`/repositories/${repository}/pullrequests`, {
-        q: `state="OPEN" AND reviewers.uuid="${user.id}"`,
+        q: `state="OPEN" AND (reviewers.uuid="${user.id}" OR author.uuid="${user.id}")`,
         fields: [
           'next',
           'values.id',
@@ -185,6 +192,7 @@ export function createLiveBitbucketClient({
           'values.draft',
           'values.updated_on',
           'values.author.uuid',
+          'values.author.account_id',
           'values.author.display_name',
           'values.source.branch.name',
           'values.source.commit.hash',
@@ -202,7 +210,7 @@ export function createLiveBitbucketClient({
         .map((pr) => {
           const participant = (pr.participants ?? []).find((item) => item.user?.uuid === user.id);
           return {
-            ...mapPr(repository, pr),
+            ...mapPr(repository, pr, user),
             myReviewState:
               participant?.state === 'approved'
                 ? 'approved'
@@ -218,7 +226,7 @@ export function createLiveBitbucketClient({
       const user = await this.getCurrentUser();
       const participant = (pr.participants ?? []).find((item) => item.user?.uuid === user.id);
       return {
-        ...mapPr(repository, pr),
+        ...mapPr(repository, pr, user),
         myReviewState:
           participant?.state === 'approved'
             ? 'approved'

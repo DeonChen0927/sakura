@@ -8,7 +8,8 @@ const mapRow = (row) =>
     number: row.number,
     title: row.title,
     description: row.description,
-    author: { name: row.author_name, id: row.author_id },
+    author: { name: row.author_name, id: row.author_id, accountId: row.author_account_id ?? null },
+    authoredByMe: Boolean(row.authored_by_me),
     sourceBranch: row.source_branch,
     targetBranch: row.target_branch,
     sourceCommit: row.source_commit,
@@ -29,15 +30,17 @@ export const prRepo = {
     const id = `${pr.repository}#${pr.number}`;
     run(
       `INSERT INTO pull_requests (
-         id, repository, number, title, description, author_name, author_id,
-         source_branch, target_branch, source_commit, target_commit,
+         id, repository, number, title, description, author_name, author_id, author_account_id,
+         authored_by_me, source_branch, target_branch, source_commit, target_commit,
          lifecycle_state, is_draft, my_review_state, updated_at, synced_at, raw_json
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(repository, number) DO UPDATE SET
          title = excluded.title,
          description = excluded.description,
          author_name = excluded.author_name,
          author_id = excluded.author_id,
+         author_account_id = excluded.author_account_id,
+         authored_by_me = excluded.authored_by_me,
          source_branch = excluded.source_branch,
          target_branch = excluded.target_branch,
          source_commit = excluded.source_commit,
@@ -56,6 +59,8 @@ export const prRepo = {
       pr.description ?? null,
       pr.author?.name ?? null,
       pr.author?.id ?? null,
+      pr.author?.accountId ?? null,
+      pr.authoredByMe ? 1 : 0,
       pr.sourceBranch ?? null,
       pr.targetBranch ?? null,
       pr.sourceCommit ?? null,
