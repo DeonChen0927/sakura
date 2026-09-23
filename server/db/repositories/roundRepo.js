@@ -37,6 +37,7 @@ const mapRound = (row) =>
     inputFingerprint: row.input_fingerprint,
     scope: parseJson(row.scope_json, null),
     jiraSnapshot: parseJson(row.jira_snapshot_json, null),
+    knowledgeBase: parseJson(row.knowledge_base_json, null),
     aiResult: parseJson(row.ai_result_json, null),
     summaryZh: row.summary_zh,
     summaryEnDraft: row.summary_en_draft,
@@ -58,6 +59,7 @@ const mapFinding = (row) =>
     oldLine: row.old_line,
     newLine: row.new_line,
     anchorKind: row.anchor_kind,
+    wikiRefs: parseJson(row.wiki_refs_json, []),
     aiCommentEn: row.comment_en,
     inScope: Boolean(row.in_scope),
     createdAt: row.created_at,
@@ -86,8 +88,8 @@ export const roundRepo = {
       `INSERT INTO review_rounds (
          id, pull_request_id, round_number, status, model_id, model_name, model_verified,
          session_id, source_commit, target_commit, input_fingerprint, scope_json,
-         jira_snapshot_json, integration_mode, started_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         jira_snapshot_json, knowledge_base_json, integration_mode, started_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       round.pullRequestId,
       round.roundNumber,
@@ -101,6 +103,7 @@ export const roundRepo = {
       round.inputFingerprint,
       round.scope ? JSON.stringify(round.scope) : null,
       round.jiraSnapshot ? JSON.stringify(round.jiraSnapshot) : null,
+      round.knowledgeBase ? JSON.stringify(round.knowledgeBase) : null,
       round.integrationMode,
       nowIso(),
     );
@@ -264,8 +267,8 @@ export const roundRepo = {
     run(
       `INSERT INTO findings (
          id, round_id, finding_key, severity, title_zh, detail_zh, evidence_json,
-         file_path, old_line, new_line, anchor_kind, comment_en, in_scope, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         file_path, old_line, new_line, anchor_kind, comment_en, in_scope, wiki_refs_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       roundId,
       finding.key,
@@ -279,6 +282,7 @@ export const roundRepo = {
       finding.anchorKind ?? 'line',
       finding.commentEn,
       finding.inScope === false ? 0 : 1,
+      JSON.stringify(finding.wikiRefs ?? []),
       nowIso(),
     );
     return id;

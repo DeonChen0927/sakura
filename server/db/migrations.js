@@ -189,4 +189,13 @@ export const migrations = [
       ALTER TABLE pull_requests ADD COLUMN authored_by_me INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    // 本轮实际使用的知识库快照（ei-ai-skills / ei-llm-wiki checkout 与版本），
+    // 以及每条发现引用的 wiki 页面。报告与历史必须能看出结论依据了哪一版知识库。
+    id: '006-knowledge-base',
+    sql: `
+      ALTER TABLE review_rounds ADD COLUMN knowledge_base_json TEXT;
+      ALTER TABLE findings ADD COLUMN wiki_refs_json TEXT;
+    `,
+  },
 ];

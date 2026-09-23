@@ -6,6 +6,7 @@ import { settingsService, SettingKey } from './settingsService.js';
 import { auditRepo } from '../db/repositories/auditRepo.js';
 import { resolveTeamSealScope, resolveFullChangeScope, ScopePolicy } from '../domain/teamSeal.js';
 import { teamRosterService } from './teamRosterService.js';
+import { knowledgeBaseService } from './knowledgeBaseService.js';
 import { gitCacheService } from './gitCacheService.js';
 import { extractJiraKeys, validateJiraSnapshot, jiraFingerprintParts } from '../domain/jira.js';
 import { diffStats } from '../domain/diff.js';
@@ -222,6 +223,39 @@ export const prService = {
       });
     }
 
+    /**
+     * 知识库（FR-12）：评审必须经 ei-ai-skills 的 ei-llm-wiki skill 使用 EI 工程 wiki。
+     * wiki 只需要 clone 一次，所以这里用 ensure()：缺 checkout 就自动克隆，不让用户先去手工准备。
+     * 克隆不成时才阻断 —— 静默退化成「只看 diff」会让报告看起来一样完整，
+     * 实际却丢掉了子系统约定与历史缺陷这类只有 wiki 才有的判断依据。
+     */
+    const knowledgeBase = await knowledgeBaseService.ensure();
+    if (!knowledgeBase.enabled) {
+      warnings.push({
+        code: 'knowledge_base_disabled',
+        message: '知识库已在设置中关闭，本轮不会检索 ei-llm-wiki，评审只依据代码与需求。',
+      });
+    } else if (knowledgeBase.demo) {
+      warnings.push({
+        code: 'knowledge_base_demo',
+        message: '演示模式不会调用 ei-llm-wiki 知识库，报告中的结论不含任何 wiki 依据。',
+      });
+    } else if (!knowledgeBase.available) {
+      const entry = {
+        code: 'knowledge_base_unavailable',
+        message: `EI wiki 知识库不可用：${knowledgeBase.detail}`,
+        remedy: knowledgeBase.remedy,
+      };
+      if (knowledgeBase.required) blockers.push(entry);
+      else warnings.push(entry);
+    } else if (knowledgeBase.wiki?.head?.stale) {
+      warnings.push({
+        code: 'knowledge_base_stale',
+        message: `知识库 checkout 最后一次提交在 ${knowledgeBase.wiki.head.ageDays} 天前，可能已落后于远端。`,
+        remedy: '可在「连接设置 → 知识库」点击刷新，再开始评审。',
+      });
+    }
+
     return {
       pullRequest: pr,
       diff: { files: diffFiles, stats: diffStats(diffFiles) },
@@ -229,6 +263,7 @@ export const prService = {
       jiraSnapshot,
       jiraCheck,
       gitCache,
+      knowledgeBase,
       manualJiraKeys: settingsService.manualJiraKeys(pr.id),
       model,
       warnings,

@@ -6,6 +6,8 @@
  * - 只有署名、没有实质正文时不构成可发布内容。
  */
 
+import { describeKnowledgeSnapshot } from './knowledgeBase.js';
+
 export const SIGNATURE_SEPARATOR = '---';
 
 export const SignatureContext = {
@@ -51,6 +53,10 @@ export function buildChineseAttribution(round, pullRequest, options = {}) {
       `第 ${round.roundNumber} 轮`,
       `源 ${short(round.sourceCommit)} → 目标 ${short(round.targetCommit)}`,
     ].join(' · '),
+    // 知识库版本也读本轮冻结的快照：报告结论依据的是这一版 wiki（FR-12）。
+    knowledge:
+      describeKnowledgeSnapshot(round.knowledgeBase) ??
+      (round.knowledgeBase ? '知识库：本轮未使用 EI wiki' : null),
     humanState: options.publisherName
       ? `已由 ${options.publisherName} 人工审核并发布`
       : '待人工确认（尚未发布）',

@@ -62,6 +62,8 @@ export const api = {
     request('PATCH', `/api/carryover/${id}`, { verdict, note }),
   gitCache: () => request('GET', '/api/git-cache'),
   clearGitCache: (confirm) => request('POST', '/api/git-cache/clear', { confirm }),
+  knowledgeBase: () => request('GET', '/api/knowledge-base'),
+  refreshKnowledgeBase: () => request('POST', '/api/knowledge-base/refresh', {}),
   cancelRound: (roundId) => request('POST', `/api/rounds/${roundId}/cancel`, {}),
   updateSummary: (roundId, patch) => request('PATCH', `/api/rounds/${roundId}/summary`, patch),
   updateFinding: (findingId, patch) => request('PATCH', `/api/findings/${findingId}`, patch),

@@ -33,6 +33,7 @@ Sakura 项目本身无需 Git 版本管理；允许为被评审仓库维护独�
 | D10 | 界面和本地报告使用中文；发布至 Bitbucket 的评论使用英文。 |
 | D11 | 保留功能区切换能力，未来添加其他工具；第一版不实现其他业务模块。 |
 | D12 | Review report 与每条发布的 review comment 必须包含 AI 署名；人工编辑不能移除 AI 来源标识。 |
+| D13 | PR 评审必须挂载 `ei-ai-skills` 插件，以 `ei-llm-wiki` 工程 wiki 作为知识库；知识库不可用时默认阻断评审，且引用必须可核验，不接受“我查过了”的自述。 |
 
 已记录用户对需求整体的确认；下文保留的“建议”“待确认”标记用于标识仍需细化的实现选项或缺失信息，不将未知的实例参数或技术能力视为已验证。
 
@@ -229,6 +230,22 @@ AI 建议和用户最终决定分别保存。AI “未发现阻断问题”不�
 - 运行时按冻结的模型参数调用 CLI，并验证实际使用的模型；不一致时阻断完成/发布流程，明确显示问题。
 - 报告、评论署名、历史及发布回执使用该轮实际模型快照；不能读取最新配置来重新署名旧内容。
 
+### FR-12 评审知识库（ei-ai-skills / ei-llm-wiki）
+
+- 每轮评审必须挂载 `ei-ai-skills` 插件的 `ei-llm-wiki` skill，并把本机 EI 工程 wiki checkout 作为只读知识库；这是评审的强制输入，不是可选增强。
+- 插件解析顺序：连接设置中的显式路径 → `~/.copilot/installed-plugins/ei-ai-skills/*` 下含 `ei-llm-wiki` skill 的目录。找不到即视为知识库不可用；插件属于用户的 CLI 环境，Sakura 不代为安装。
+- wiki checkout 解析顺序：连接设置中的显式路径 → 环境变量 `EI_LLM_WIKI_REPO` → `%APPDATA%/ei-ai-skills/ei-llm-wiki.json` → Sakura 托管目录 `data/knowledge-base/ei-llm-wiki`。必须校验标记文件（`CLAUDE.md`、`index.md`、`_meta/lint.py`）确实存在，避免把任意目录当成 wiki。
+- **用户不需要预先准备 checkout。** 以上都解析不到时，Sakura 在前置检查阶段自动克隆一次 `git@bitbucket.org:agfahealthcare/ei-llm-wiki.git` 到托管目录（远端与开关均可在设置中修改）。wiki "clone 一次之后就只是个文件夹"，没有理由把它变成用户的前置作业；但评审子进程按 FR-05 被禁用 shell 且不允许反问用户，skill 自带的 clone/追问流程在这里跑不起来，所以这一次性动作由后端完成。
+- 自动克隆必须非交互：`GIT_TERMINAL_PROMPT=0`、SSH `BatchMode=yes`，任何需要输入口令或确认 host key 的场景立即失败而不是挂住。目标目录必须为空或不存在，绝不覆盖已有内容；失败后清理半成品目录并进入 10 分钟冷却，避免每次前置检查都重撞同一个鉴权错误，用户显式点刷新可立即重试。
+- 克隆失败（多数是缺 Bitbucket SSH key 或无 `ei-llm-wiki` 读权限）时如实阻断并给出具体指引，不退化成"只看 diff"。
+- 用户已有 checkout 时永远优先复用，不重复占磁盘；刷新只做 fetch，且只有在干净的 `main` 分支上才 fast-forward，绝不切分支或改写本地改动 —— 那是用户的仓库，不是 Sakura 的缓存。
+- 调用 CLI 时以 wiki checkout 作为工作目录，附加 `--plugin-dir <插件目录>`、`--add-dir <wiki 目录>`、`--allow-tool skill` 与 `EI_LLM_WIKI_REPO` 环境变量；同时保留 `--no-custom-instructions` 与 `--no-ask-user`，使 skill 成为唯一受信任的指令来源，且不会因等待用户输入而挂起。
+- 前置检查读取知识库状态：启用且必需而不可用（含自动克隆失败）时阻断评审并给出具体修复指引；非必需时降级为警告；演示模式明确标注知识库未真实生效，也不会触发克隆；checkout 超过 14 天未更新时给出陈旧警告。
+- 提示词要求模型先用 wiki 查证相关子系统、历史决策与缺陷教训，再给结论，并在结果中返回 `wikiConsulted`（是否查询、查询词、引用条目、说明）及每条发现的 `wikiRefs`。
+- 所有引用路径由后端对冻结的 checkout 逐一核验文件是否真实存在，并拦截路径穿越；引用不存在即判定本轮结果不可信并失败，不允许伪造出处。
+- 允许“查了但没有相关条目”，但必须给出非空说明；不得在无说明的情况下交空引用，也不得在知识库不可用时声称查过。
+- 每轮冻结知识库快照（插件路径、checkout 路径、commit、分支、是否干净），随轮次与发现一起持久化；中文报告署名附带知识库来源，英文发布评论的签名格式保持不变。
+
 ## 6. 状态模型
 
 必须分开维护四个维度，不能以一个“状态”混用：
@@ -288,6 +305,10 @@ AI 建议和用户最终决定分别保存。AI “未发现阻断问题”不�
 | AC22 | 只有署名、没有实质正文时，不能满足 Request changes 或仅评论的内容要求；不向远端写入署名空壳。 |
 | AC23 | 首次使用默认 Opus 5；用户修改模型后新轮次采用新选择。正式版刷新/重启保留配置，保存失败或配置失效有明确提示。 |
 | AC24 | 修改全局模型不影响已创建/运行任务和历史报告；旧报告发布仍署原模型，新轮次的报告和评论署新模型。 |
+| AC25 | 知识库启用且必需时：本机没有 checkout 必须自动克隆一次后继续；缺 `ei-ai-skills` 插件或克隆失败（SSH/权限/网络）必须在前置检查阻断评审并给出可执行的修复指引，不得静默跳过知识库继续评审。 |
+| AC26 | 评审结果中的 wiki 引用逐条对照本轮冻结的 checkout 校验；引用文件不存在或路径越界时本轮失败，不能作为完整报告发布。 |
+| AC27 | 知识库快照随轮次持久化并在报告中可见；演示模式如实标注知识库未真实生效、不触发克隆，模型不得声称查过 wiki。 |
+| AC28 | 自动克隆全程非交互，不会因口令或 host key 确认挂起；目标目录非空时拒绝克隆而不是覆盖；用户已配置的 checkout 永远优先复用，不被托管副本取代。 |
 
 ## 9. 技术确认情况与待验证项
 
@@ -298,6 +319,8 @@ AI 建议和用户最终决定分别保存。AI “未发现阻断问题”不�
 - 仅证实命令入口存在，未启动真实评审，未验证 Claude Opus 5 账号权限、事件格式和权限组合。
 - 查看了 Bitbucket Cloud PR REST 官方参考，示例将 `draft` 与 `state` 分开；实际筛选和写入语义仍需联调。
 - 未使用原始文件的任何凭据，未调用真实 Jira/Bitbucket API。
+- 2026-09-23 在本机实跑 CLI 验证知识库挂载：`--plugin-dir` + `--add-dir` + `--allow-tool skill` + `--no-custom-instructions` + `--no-ask-user` 组合可用，`skill` 工具能以 `skillSource: plugin` 成功加载 `ei-llm-wiki`，`--no-custom-instructions` 不会屏蔽插件 skill。
+- 2026-09-23 实跑自动克隆：Sakura 从零克隆真实 `git@bitbucket.org:agfahealthcare/ei-llm-wiki.git` 到 `data/knowledge-base/ei-llm-wiki`（约 12 MB）成功，解析为 `managed` 来源，读到 checkout 内的 canonical skill `wiki-query` 与 `wiki-contribute`。尚未在真实 PR 上跑完整一轮评审。
 
 | 待验证 | 必须产出的依据 |
 | --- | --- |
@@ -310,6 +333,7 @@ AI 建议和用户最终决定分别保存。AI “未发现阻断问题”不�
 | 行级评论 | diff 新旧侧、删除/重命名文件以及无法行定位时的合法请求 |
 | 状态更新 | Approve、Request changes、撤销或切换旧状态的真实 API 行为及权限 |
 | 部分失败恢复 | 写入超时后的核实方法、去重机制、状态更新失败的恢复流程 |
+| 真实 wiki 评审效果 | 对真实 PR 跑完整一轮：`wiki-query` 是否检索到相关条目、引用命中率、延迟与 token 成本。自动克隆与解析链路已在真实 `ei-llm-wiki` 上验证通过 |
 
 官方参考：<https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/>
 

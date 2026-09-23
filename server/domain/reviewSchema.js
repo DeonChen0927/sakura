@@ -1,5 +1,6 @@
 import { isPathInScope } from './teamSeal.js';
 import { CriterionVerdict, validateCriteriaCoverage } from './jira.js';
+import { validateWikiUsage, validateFindingWikiRefs, normalizeWikiPath } from './knowledgeBase.js';
 
 /**
  * AI 结构化结果的后端校验（FR-05 / AC06）。
@@ -20,7 +21,7 @@ export const SuggestedAction = {
 
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
 
-export function validateAiResult(raw, { scope, jiraSnapshot }) {
+export function validateAiResult(raw, { scope, jiraSnapshot, knowledgeBase } = {}) {
   const problems = [];
   const push = (code, message) => problems.push({ code, message });
 
@@ -47,6 +48,14 @@ export function validateAiResult(raw, { scope, jiraSnapshot }) {
   }
 
   if (!Array.isArray(raw.uncertainties)) push('uncertainties_missing', '缺少不确定项列表');
+
+  // 知识库（FR-12 / AC26）：要求使用 ei-llm-wiki 时，必须给出可核对的检索与引用。
+  // 引用路径由后端对着真实 checkout 核对，模型无法靠自述蒙混过关。
+  const wikiActive = Boolean(knowledgeBase?.active);
+  if (wikiActive) {
+    const wiki = validateWikiUsage(raw.wikiConsulted, { hasFile: knowledgeBase.hasFile });
+    wiki.problems.forEach((problem) => problems.push(problem));
+  }
 
   if (!Array.isArray(raw.criteriaChecks)) {
     push('criteria_checks_missing', '缺少 Jira 验收标准核对记录');
@@ -95,6 +104,13 @@ export function validateAiResult(raw, { scope, jiraSnapshot }) {
     if (!Array.isArray(finding?.evidence) || !finding.evidence.length) {
       push('finding_evidence_missing', `发现 ${label} 缺少证据`);
     }
+
+    if (wikiActive) {
+      const refs = validateFindingWikiRefs(finding?.wikiRefs, { hasFile: knowledgeBase.hasFile });
+      refs.problems.forEach((problem) =>
+        push(problem.code, `发现 ${label} 的 ${problem.message}`),
+      );
+    }
   });
 
   return { ok: problems.length === 0, problems };
@@ -110,6 +126,19 @@ export function normalizeAiResult(raw) {
       reviewedFiles: raw.scopeCoverage?.reviewedFiles ?? [],
       contextFiles: raw.scopeCoverage?.contextFiles ?? [],
       notCovered: raw.scopeCoverage?.notCovered ?? [],
+    },
+    // 知识库检索记录随报告一起保存：历史回放要能看出本轮到底查了什么（FR-12）。
+    wikiConsulted: {
+      queried: raw.wikiConsulted?.queried === true,
+      queries: (raw.wikiConsulted?.queries ?? []).map((item) => String(item)),
+      references: (raw.wikiConsulted?.references ?? [])
+        .map((ref) => ({
+          path: normalizeWikiPath(ref?.path),
+          titleZh: String(ref?.titleZh ?? '').trim(),
+          noteZh: String(ref?.noteZh ?? '').trim(),
+        }))
+        .filter((ref) => ref.path),
+      noteZh: String(raw.wikiConsulted?.noteZh ?? '').trim(),
     },
     criteriaChecks: (raw.criteriaChecks ?? []).map((check) => ({
       criterionId: check.criterionId,
@@ -131,6 +160,9 @@ export function normalizeAiResult(raw) {
       newLine: Number.isInteger(finding.newLine) ? finding.newLine : null,
       anchorKind: finding.anchorKind ?? 'line',
       scopeJustification: finding.scopeJustification ?? null,
+      wikiRefs: (Array.isArray(finding.wikiRefs) ? finding.wikiRefs : [])
+        .map((item) => normalizeWikiPath(typeof item === 'string' ? item : item?.path))
+        .filter(Boolean),
       commentEn: finding.commentEn,
       inScope: true,
     })),

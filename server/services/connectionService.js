@@ -2,6 +2,7 @@ import { getClients, CredentialName } from '../integrations/registry.js';
 import { credentialStore, credentialBackend } from '../security/credentialStore.js';
 import { settingsService, SettingKey } from './settingsService.js';
 import { teamRosterService } from './teamRosterService.js';
+import { knowledgeBaseService } from './knowledgeBaseService.js';
 import { auditRepo } from '../db/repositories/auditRepo.js';
 import { AppError, ErrorKind } from '../lib/errors.js';
 import { config } from '../config.js';
@@ -48,6 +49,8 @@ export const connectionService = {
           members: undefined,
         };
       })(),
+      // 知识库不可用会阻断评审，同样必须在设置页直接可见（FR-12）。
+      knowledgeBase: await knowledgeBaseService.ensure(),
     };
   },
 

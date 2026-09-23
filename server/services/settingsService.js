@@ -14,6 +14,7 @@ export const SettingKey = {
   MANUAL_JIRA_KEYS: 'review.manualJiraKeys',
   GIT_CACHE: 'review.gitCache',
   TEAM_ROSTER: 'review.teamRoster',
+  KNOWLEDGE_BASE: 'review.knowledgeBase',
 };
 
 const DEFAULTS = {
@@ -48,6 +49,20 @@ const DEFAULTS = {
    * path 留空时自动取上面的本机仓库路径 + teams.yaml，避免重复填同一个目录。
    */
   [SettingKey.TEAM_ROSTER]: { path: '', team: 'Seal' },
+  /**
+   * 评审知识库（FR-12）：必须经 ei-ai-skills 插件的 ei-llm-wiki skill 使用 EI 工程 wiki。
+   * 路径留空时按 skill 的解析顺序自动查找（EI_LLM_WIKI_REPO → 每用户配置文件 → Sakura 托管目录）；
+   * 都没有时按 autoClone 自动克隆一次，用户不需要预先准备 checkout。
+   * required 默认为真：知识库不可用时阻断评审，而不是悄悄退化成只看 diff。
+   */
+  [SettingKey.KNOWLEDGE_BASE]: {
+    enabled: true,
+    required: true,
+    autoClone: true,
+    remote: '',
+    pluginPath: '',
+    wikiRepoPath: '',
+  },
 };
 
 /**

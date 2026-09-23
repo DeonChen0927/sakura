@@ -28,6 +28,8 @@ export const paths = {
   secrets: path.join(config.dataDir, 'secrets'),
   repoCache: path.join(config.dataDir, 'repo-cache'),
   logs: path.join(config.dataDir, 'logs'),
+  /** Sakura 自己托管的知识库 checkout（FR-12），用户无需预先准备 */
+  knowledgeBase: path.join(config.dataDir, 'knowledge-base'),
 };
 
 export const isDemo = () => config.integrationMode !== 'live';

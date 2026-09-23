@@ -173,6 +173,13 @@ export function createMockCopilotClient() {
           notCovered: [],
         },
         criteriaChecks,
+        // 演示模式不接触真实 wiki：如实写明未检索，不伪造知识库引用（FR-12 / AC21）。
+        wikiConsulted: {
+          queried: false,
+          queries: [],
+          references: [],
+          noteZh: '演示模式未调用 ei-llm-wiki 知识库，本结果不含任何 wiki 依据。',
+        },
         uncertainties: [
           '缓存在多线程视口切换下的实际行为无法通过静态代码确认，需要人工或集成测试验证。',
         ],

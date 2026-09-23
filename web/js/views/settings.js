@@ -576,6 +576,171 @@ function teamRosterCard(connection) {
   );
 }
 
+/**
+ * 知识库（FR-12）：PR 评审必须经 ei-ai-skills 的 ei-llm-wiki skill 使用 EI 工程 wiki。
+ * 不可用时默认阻断评审 —— 静默退化成「只看 diff」的报告看起来一样完整，实则少了判断依据。
+ */
+function knowledgeBaseCard(connection) {
+  if (!connection.knowledgeBase) {
+    return h(
+      'section',
+      { class: 'content-card' },
+      h('h2', {}, '评审知识库'),
+      notice(
+        'warning',
+        h('strong', {}, '后端版本过旧：'),
+        '当前运行的 Sakura 服务进程还不支持知识库配置（接口未返回该字段）。请重启本地服务（Ctrl+C 后重新 npm start）。',
+      ),
+    );
+  }
+
+  const kb = connection.knowledgeBase;
+  const settings = kb.settings ?? {};
+  const save = async (patch) => {
+    await api.saveSetting('review.knowledgeBase', { ...settings, ...patch });
+    toast('知识库配置已保存');
+    await reload();
+  };
+
+  const head = kb.wiki?.head ?? null;
+  return h(
+    'section',
+    { class: 'content-card' },
+    h('h2', {}, '评审知识库'),
+    h(
+      'p',
+      { class: 'muted' },
+      '评审通过 ei-ai-skills 插件的 ei-llm-wiki skill 读取 EI 工程 wiki：子系统怎么工作、某个决定为什么这么定、历史缺陷留下过什么教训，只看 diff 得不出这些结论。wiki 只需要克隆一次，Sakura 会在首次评审前自动完成，之后按需刷新并以只读方式挂载，评审子进程不执行任何 git 命令。',
+    ),
+    h(
+      'label',
+      { class: 'checkbox' },
+      h('input', {
+        type: 'checkbox',
+        checked: settings.enabled !== false,
+        onchange: (event) => save({ enabled: event.target.checked }),
+      }),
+      '评审时使用 ei-llm-wiki 知识库',
+    ),
+    h(
+      'label',
+      { class: 'checkbox' },
+      h('input', {
+        type: 'checkbox',
+        checked: settings.required !== false,
+        disabled: settings.enabled === false,
+        onchange: (event) => save({ required: event.target.checked }),
+      }),
+      '知识库不可用时阻断评审（关闭后会降级为只看代码与需求，并在报告中标注）',
+    ),
+    h(
+      'label',
+      { class: 'checkbox' },
+      h('input', {
+        type: 'checkbox',
+        checked: settings.autoClone !== false,
+        disabled: settings.enabled === false,
+        onchange: (event) => save({ autoClone: event.target.checked }),
+      }),
+      `本机没有 checkout 时自动克隆一次到 ${kb.managedPath ?? 'data/knowledge-base'}`,
+    ),
+    h(
+      'label',
+      { class: 'field-label' },
+      'ei-llm-wiki checkout 路径',
+      h(
+        'span',
+        {},
+        '留空则按顺序查找：EI_LLM_WIKI_REPO → %APPDATA%/ei-ai-skills/ei-llm-wiki.json → Sakura 托管目录；都没有就自动克隆。已有 checkout 时填在这里可以复用，不会重复占磁盘。',
+      ),
+    ),
+    h('input', {
+      class: 'search',
+      value: settings.wikiRepoPath ?? '',
+      placeholder: 'D:\\dev\\ei-llm-wiki',
+      'aria-label': 'ei-llm-wiki checkout 路径',
+      onchange: (event) => save({ wikiRepoPath: event.target.value.trim() }),
+    }),
+    h(
+      'label',
+      { class: 'field-label' },
+      'ei-ai-skills 插件目录',
+      h('span', {}, '留空则自动查找 ~/.copilot/installed-plugins/ei-ai-skills'),
+    ),
+    h('input', {
+      class: 'search',
+      value: settings.pluginPath ?? '',
+      placeholder: 'C:\\Users\\you\\.copilot\\installed-plugins\\ei-ai-skills\\ei-llm-wiki',
+      'aria-label': 'ei-ai-skills 插件目录',
+      onchange: (event) => save({ pluginPath: event.target.value.trim() }),
+    }),
+    kb.enabled === false
+      ? notice('warning', '知识库已关闭：评审不会检索 wiki，结论可能与既有设计约定冲突而不自知。')
+      : kb.available
+        ? notice(
+            'neutral',
+            h('strong', {}, '知识库可用：'),
+            `${kb.wiki.path}${head?.commit ? `@${head.commit.slice(0, 12)}` : ''}`,
+            kb.wiki?.managed ? ' · Sakura 自动克隆' : '',
+            head?.branch ? ` · 分支 ${head.branch}` : '',
+            head?.ageDays !== null && head?.ageDays !== undefined
+              ? ` · 最后提交 ${head.ageDays} 天前`
+              : '',
+            kb.plugin?.path ? h('br', {}) : null,
+            kb.plugin?.path ? `插件：${kb.plugin.path}` : null,
+          )
+        : notice(
+            'warning',
+            h('strong', {}, '知识库不可用：'),
+            `${kb.detail ?? '未知原因'}${kb.remedy ? ` ${kb.remedy}` : ''}`,
+          ),
+    kb.demo ? notice('neutral', '演示模式不会实际调用知识库；切换到 live 后才会挂载。') : null,
+    kb.provision && kb.provision.ok === false
+      ? notice(
+          'warning',
+          h('strong', {}, '自动克隆失败：'),
+          `${kb.provision.detail}（远端 ${kb.provision.remote}）。若是 SSH 鉴权问题，请先配置 Bitbucket SSH key 并确认有 ei-llm-wiki 读权限，再点下方刷新重试。`,
+        )
+      : null,
+    head?.stale
+      ? notice('warning', `checkout 最后一次提交在 ${head.ageDays} 天前，建议先刷新再评审。`)
+      : null,
+    kb.wiki?.refresh
+      ? notice(kb.wiki.refresh.ok ? 'neutral' : 'warning', `刷新结果：${kb.wiki.refresh.detail}`)
+      : null,
+    kb.wiki?.canonicalSkills?.length
+      ? h(
+          'div',
+          { class: 'setting-value' },
+          `checkout 内可用的 canonical skill：${kb.wiki.canonicalSkills.map((item) => item.name).join('、')}`,
+        )
+      : null,
+    h(
+      'div',
+      { style: 'display:flex;gap:8px;margin-top:12px;flex-wrap:wrap' },
+      h(
+        'button',
+        {
+          class: 'button small',
+          type: 'button',
+          disabled: !kb.wiki?.ok,
+          onclick: async () => {
+            toast('正在刷新知识库（git fetch）…');
+            try {
+              await api.refreshKnowledgeBase();
+              toast('知识库已刷新');
+              await reload();
+            } catch (error) {
+              toast(`刷新失败：${error.message}`);
+            }
+          },
+        },
+        '刷新知识库',
+      ),
+    ),
+  );
+}
+
 export function renderSettingsPage() {
   const connection = state.connection;
   if (!connection) return h('p', { class: 'muted' }, '正在读取连接状态…');
@@ -606,6 +771,7 @@ export function renderSettingsPage() {
       credentialCard(connection),
       gitCacheCard(),
       teamRosterCard(connection),
+      knowledgeBaseCard(connection),
     ),
   );
 }

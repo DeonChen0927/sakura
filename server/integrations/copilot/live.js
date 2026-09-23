@@ -260,18 +260,29 @@ export function createLiveCopilotClient({
       const prompt = buildReviewPrompt(payload);
       // 提示词经 stdin 传入：Windows 单条命令行上限 32767 字符，
       // 带上只读上下文后 --prompt 必然触发 ENAMETOOLONG（已实测）。
-      const args = [
-        '--model',
-        model.id,
-        '--output-format',
-        'json',
-        ...toolPolicy.flatMap((entry) => [entry.flag, entry.value]),
-      ];
+      const { args, cwd, env: knowledgeEnv, knowledgeBase } = buildReviewInvocation({
+        model,
+        toolPolicy,
+        knowledgeBase: payload.knowledgeBase,
+      });
 
       onEvent?.({ stage: 'session_created', message: `启动 Copilot CLI（模型 ${model.id}）` });
+      if (knowledgeBase?.active) {
+        onEvent?.({
+          stage: 'knowledge_base',
+          message: `已挂载 ei-ai-skills 知识库：${knowledgeBase.wikiPath}${
+            knowledgeBase.commit ? `@${String(knowledgeBase.commit).slice(0, 12)}` : ''
+          }`,
+        });
+      }
 
       const { env } = await spawnEnv();
-      const child = spawn(binary, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env });
+      const child = spawn(binary, args, {
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...env, ...knowledgeEnv },
+        cwd,
+      });
       child.stdin.on('error', () => {
         // 子进程被取消/超时杀掉时 stdin 会 EPIPE，这里不应压过真正的失败原因
       });
@@ -360,7 +371,45 @@ export function defaultToolPolicy() {
     { flag: '--allow-tool', value: 'view' },
     { flag: '--allow-tool', value: 'grep' },
     { flag: '--allow-tool', value: 'glob' },
+    // 知识库入口：ei-ai-skills 插件里的 ei-llm-wiki skill 必须能被加载与调用（FR-12）。
+    { flag: '--allow-tool', value: 'skill' },
   ];
+}
+
+/**
+ * 组装一次评审调用的命令行、工作目录与环境变量（FR-05 / FR-12）。
+ *
+ * 知识库可用时：
+ * - `--plugin-dir` 显式加载 ei-ai-skills，不依赖 CLI 的全局插件状态；
+ * - 工作目录设为 wiki checkout，正好命中 skill 的「当前工作区即 checkout」解析分支，
+ *   于是 skill 不需要 clone、也不会向用户提问；
+ * - `EI_LLM_WIKI_REPO` 同时注入，作为解析顺序的第二道保险；
+ * - `--no-custom-instructions` 保留「不自动信任仓库指令」这条约束（FR-05）：
+ *   知识库以 skill 为唯一受信入口，wiki 页面本身只是被读取的资料。
+ * - `--no-ask-user`：非交互评审绝不能停在提问上等人。
+ */
+export function buildReviewInvocation({ model, toolPolicy = defaultToolPolicy(), knowledgeBase } = {}) {
+  const args = [
+    '--model',
+    model.id,
+    '--output-format',
+    'json',
+    '--no-ask-user',
+    '--no-custom-instructions',
+    ...toolPolicy.flatMap((entry) => [entry.flag, entry.value]),
+  ];
+
+  const env = {};
+  let cwd;
+
+  if (knowledgeBase?.active && knowledgeBase.wikiPath) {
+    args.push('--add-dir', knowledgeBase.wikiPath);
+    if (knowledgeBase.pluginPath) args.push('--plugin-dir', knowledgeBase.pluginPath);
+    env.EI_LLM_WIKI_REPO = knowledgeBase.wikiPath;
+    cwd = knowledgeBase.wikiPath;
+  }
+
+  return { args, cwd, env, knowledgeBase: knowledgeBase ?? null };
 }
 
 /**

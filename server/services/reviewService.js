@@ -2,6 +2,7 @@ import { getClients } from '../integrations/registry.js';
 import { prService } from './prService.js';
 import { settingsService } from './settingsService.js';
 import { gitCacheService } from './gitCacheService.js';
+import { knowledgeBaseService } from './knowledgeBaseService.js';
 import { roundRepo, RoundStatus, HISTORY_LIMIT } from '../db/repositories/roundRepo.js';
 import { prRepo } from '../db/repositories/prRepo.js';
 import { publishRepo } from '../db/repositories/publishRepo.js';
@@ -67,10 +68,28 @@ export const reviewService = {
       inputFingerprint: preflight.inputFingerprint,
       scope: preflight.scope,
       jiraSnapshot: preflight.jiraSnapshot,
+      // 知识库版本同样在创建时冻结：报告结论依据的是这一版 wiki，不是之后更新的内容（FR-12）
+      knowledgeBase: knowledgeBaseService.snapshot(preflight.knowledgeBase),
       integrationMode: settingsService.integrationMode(),
     });
 
     roundRepo.addEvent(round.id, 'preflight', '前置检查通过，已冻结本轮输入快照');
+    if (round.knowledgeBase?.active) {
+      roundRepo.addEvent(
+        round.id,
+        'knowledge_base',
+        `知识库已冻结：ei-llm-wiki ${round.knowledgeBase.wikiPath}${
+          round.knowledgeBase.commit ? `@${String(round.knowledgeBase.commit).slice(0, 12)}` : ''
+        }`,
+      );
+    } else {
+      roundRepo.addEvent(
+        round.id,
+        'knowledge_base',
+        '本轮没有可用的 EI wiki 知识库，评审只依据代码与需求',
+        'warn',
+      );
+    }
     this.pruneHistory();
     auditRepo.record('user', 'review.start', round.id, {
       pr: preflight.pullRequest.number,
@@ -112,6 +131,7 @@ export const reviewService = {
         jiraSnapshot: preflight.jiraSnapshot,
         diffFiles: scopedDiff,
         contextFiles,
+        knowledgeBase: round.knowledgeBase,
       };
 
       const run = await clients.copilot.runReview({
@@ -140,6 +160,14 @@ export const reviewService = {
       const validation = validateAiResult(run.result, {
         scope: preflight.scope,
         jiraSnapshot: preflight.jiraSnapshot,
+        // 引用核对对着本轮冻结的 checkout 做：编造的 wiki 路径不能变成“有依据”的结论。
+        knowledgeBase: round.knowledgeBase?.active
+          ? {
+              active: true,
+              hasFile: (relativePath) =>
+                knowledgeBaseService.hasFile(round.knowledgeBase.wikiPath, relativePath),
+            }
+          : { active: false },
       });
       if (!validation.ok) {
         throw new AppError(ErrorKind.UPSTREAM, 'AI 结果校验未通过，本轮报告不完整', {
@@ -151,6 +179,18 @@ export const reviewService = {
       roundRepo.saveAiResult(roundId, normalized);
       for (const finding of normalized.findings) {
         roundRepo.insertFinding(roundId, finding);
+      }
+
+      if (round.knowledgeBase?.active) {
+        const refs = normalized.wikiConsulted?.references ?? [];
+        roundRepo.addEvent(
+          roundId,
+          'knowledge_base',
+          refs.length
+            ? `知识库引用已逐条核对通过，共 ${refs.length} 篇：${refs.map((ref) => ref.path).join('、')}`
+            : `已检索知识库但没有命中相关页面：${normalized.wikiConsulted?.noteZh ?? '（无说明）'}`,
+          refs.length ? 'info' : 'warn',
+        );
       }
 
       roundRepo.addEvent(roundId, 'completed', `结果已通过后端校验，共 ${normalized.findings.length} 条发现`);
@@ -339,6 +379,8 @@ export const reviewService = {
       },
       criteriaChecks: round.aiResult?.criteriaChecks ?? [],
       scopeCoverage: round.aiResult?.scopeCoverage ?? null,
+      wikiConsulted: round.aiResult?.wikiConsulted ?? null,
+      knowledgeBase: round.knowledgeBase ?? null,
       uncertainties: round.aiResult?.uncertainties ?? [],
       suggestedAction: round.aiResult?.suggestedAction ?? null,
       events: roundRepo.events(roundId),

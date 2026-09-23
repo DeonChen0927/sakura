@@ -248,6 +248,19 @@ function renderScopeStrip(preflight) {
     ? CONTEXT_SOURCE[cache.source] ?? ['上下文：已就绪', 'green']
     : ['上下文：仅 PR diff', 'amber'];
   items.push(pill(contextLabel, contextTone));
+  const kb = preflight.knowledgeBase ?? {};
+  items.push(
+    kb.enabled === false
+      ? pill('知识库：已关闭', 'amber')
+      : kb.demo
+        ? pill('知识库：演示模式不调用', 'demo')
+        : kb.available
+          ? pill(
+              `知识库：ei-llm-wiki${kb.wiki?.head?.commit ? `@${kb.wiki.head.commit.slice(0, 7)}` : ''}`,
+              kb.wiki?.head?.stale ? 'amber' : 'green',
+            )
+          : pill(kb.required === false ? '知识库不可用（降级评审）' : '知识库不可用：阻断', kb.required === false ? 'amber' : 'red'),
+  );
   if (preflight.pullRequest.isDraft) items.push(pill('Draft：禁止状态性发布', 'amber'));
   return h('div', { class: 'context-strip' }, items);
 }
@@ -313,6 +326,7 @@ function renderAttribution(round) {
     { class: 'ai-attribution' },
     h('strong', {}, attribution.text),
     h('span', {}, attribution.context),
+    attribution.knowledge ? h('span', {}, attribution.knowledge) : null,
     h('small', {}, attribution.humanState, attribution.demo ? ' · 演示数据，非真实评审结论' : ''),
   );
 }
@@ -353,6 +367,14 @@ function renderFinding(finding, roundDetail) {
     ),
     h('h3', {}, finding.titleZh),
     h('p', {}, finding.detailZh),
+    finding.wikiRefs?.length
+      ? h(
+          'p',
+          { class: 'muted' },
+          '知识库依据：',
+          finding.wikiRefs.map((ref) => h('code', {}, `${ref} `)),
+        )
+      : null,
     finding.filePath
       ? h(
           'button',
@@ -509,6 +531,46 @@ function renderCarryover(roundDetail) {
   );
 }
 
+/**
+ * 知识库检索记录（FR-12）：引用已由后端对着本轮冻结的 checkout 逐条核对，
+ * 这里如实展示查了什么、依据了哪些页面 —— 空引用同样要显示原因，不留想象空间。
+ */
+function renderWikiConsulted(roundDetail) {
+  const kb = roundDetail.knowledgeBase;
+  const wiki = roundDetail.wikiConsulted;
+  if (!kb && !wiki) return null;
+
+  if (!kb?.active) {
+    return notice(
+      'warning',
+      h('strong', {}, '知识库：'),
+      `本轮未使用 EI wiki 知识库${kb?.detail ? `（${kb.detail}）` : ''}，结论不含 wiki 依据。`,
+    );
+  }
+
+  const refs = wiki?.references ?? [];
+  return h(
+    'div',
+    { class: 'content-card' },
+    h('h3', {}, '知识库依据（ei-llm-wiki）'),
+    h(
+      'p',
+      { class: 'muted' },
+      `版本 ${kb.commit ? kb.commit.slice(0, 12) : '未知'}`,
+      wiki?.queries?.length ? ` · 检索关键词：${wiki.queries.join('、')}` : ' · 未记录检索关键词',
+    ),
+    refs.length
+      ? h(
+          'ul',
+          { class: 'muted' },
+          refs.map((ref) =>
+            h('li', {}, h('code', {}, ref.path), ref.noteZh ? ` — ${ref.noteZh}` : ''),
+          ),
+        )
+      : notice('warning', h('strong', {}, '未命中 wiki 页面：'), wiki?.noteZh || '（AI 未说明原因）'),
+  );
+}
+
 function renderReportBody(roundDetail) {
   if (state.activeTab === 'carryover') return renderCarryover(roundDetail);
 
@@ -570,6 +632,7 @@ function renderReportBody(roundDetail) {
           roundDetail.uncertainties.join('；'),
         )
       : null,
+    renderWikiConsulted(roundDetail),
     findings.length
       ? findings.map((finding) => renderFinding(finding, roundDetail))
       : h('p', { class: 'muted' }, '本轮没有可发布的发现，「未发现」不等于已完整覆盖。'),

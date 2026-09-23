@@ -3,6 +3,7 @@ import { connectionService } from '../services/connectionService.js';
 import { settingsService } from '../services/settingsService.js';
 import { prService } from '../services/prService.js';
 import { teamRosterService } from '../services/teamRosterService.js';
+import { knowledgeBaseService } from '../services/knowledgeBaseService.js';
 import { reviewService } from '../services/reviewService.js';
 import { publishService } from '../services/publishService.js';
 import { gitCacheService } from '../services/gitCacheService.js';
@@ -66,8 +67,21 @@ export function createApiRouter() {
     const body = await readJsonBody(req);
     settingsService.set(body.key, body.value);
     teamRosterService.invalidate();
+    knowledgeBaseService.invalidate();
     resetClients();
     sendJson(res, 200, await connectionService.status());
+  });
+
+  /** 知识库状态；缺 checkout 时这里会自动克隆一次（FR-12）。 */
+  router.get('/api/knowledge-base', async (req, res) => {
+    sendJson(res, 200, await knowledgeBaseService.ensure());
+  });
+
+  /** 显式刷新：清掉失败冷却，必要时重新克隆，已有 checkout 则 fetch 并尝试快进。 */
+  router.post('/api/knowledge-base/refresh', async (req, res) => {
+    knowledgeBaseService.invalidate();
+    knowledgeBaseService.resetProvisionCooldown();
+    sendJson(res, 200, await knowledgeBaseService.ensure({ refresh: true }));
   });
 
   router.put('/api/settings/model', async (req, res) => {
