@@ -1,7 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLineSplitter, parseEventLine, eventModel, describeEvent } from '../server/integrations/copilot/jsonl.js';
-import { parseCliOutput } from '../server/integrations/copilot/live.js';
+import { parseCliOutput, classifyCliFailure } from '../server/integrations/copilot/live.js';
+
+/** 未认证与模型不可用是两回事：混为一谈会让人反复换模型，怎么换都失败。 */
+test('CLI 未认证的报错被识别为认证问题而不是模型不可用', () => {
+  const stderr = [
+    'Error: No authentication information found.',
+    '',
+    'Copilot can be authenticated with GitHub using an OAuth Token or a Fine-Grained Personal Access Token.',
+    '  • Set the COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN environment variable',
+  ].join('\n');
+  assert.equal(classifyCliFailure(stderr), 'auth');
+});
+
+test('模型被拒的报错仍归类为模型不可用', () => {
+  assert.equal(classifyCliFailure('Error: Model "gpt-6" from --model flag is not available.'), 'model');
+});
+
+test('无法归类时返回 null，不臆测原因', () => {
+  assert.equal(classifyCliFailure('Error: something else went wrong'), null);
+  assert.equal(classifyCliFailure(''), null);
+  assert.equal(classifyCliFailure(null), null);
+});
 
 /** CLI 输出分块到达，行切分必须跨块重组，否则事件会被误判为非法 JSON。 */
 test('行切分器跨数据块重组整行', () => {

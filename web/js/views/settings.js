@@ -5,10 +5,21 @@ import { state, update, actions, ensureLoaded } from '../state.js';
 const CREDENTIALS = [
   ['bitbucket.token', 'Bitbucket 访问令牌', '用于读取 PR 与在人工确认后发布评论'],
   ['jira.token', 'Jira 访问令牌', '用于只读读取需求与验收标准'],
+  [
+    'copilot.token',
+    'Copilot GitHub 令牌（可选）',
+    '仅在本机 copilot CLI 自身未登录时需要；启动 CLI 时作为 COPILOT_GITHUB_TOKEN 注入',
+  ],
 ];
 
-async function reload() {
-  const connection = await api.connectionStatus();
+const COPILOT_TOKEN_SOURCE = {
+  sakura: 'Sakura 加密保存的 Token',
+  environment: '启动进程的环境变量（换个终端启动可能失效）',
+  cli_login: 'CLI 自身的登录态',
+  demo: '演示模式',
+};
+
+async function reload() {  const connection = await api.connectionStatus();
   update({ connection });
 }
 
@@ -258,6 +269,19 @@ function connectionCard(connection) {
             { class: 'setting-value' },
             `Copilot：${identities.copilot?.account ?? identities.copilot?.version ?? identities.copilot?.detail ?? '未知'}`,
           ),
+          identities.copilot?.loggedIn === false
+            ? notice(
+                'error',
+                h('strong', {}, 'Copilot CLI 未认证：'),
+                `${identities.copilot.authDetail ?? ''} 请在上方「凭据」里录入 Copilot GitHub 令牌，或在终端运行 copilot 后执行 /login。`,
+              )
+            : identities.copilot?.tokenSource
+              ? h(
+                  'div',
+                  { class: 'setting-value' },
+                  `Copilot 凭据来源：${COPILOT_TOKEN_SOURCE[identities.copilot.tokenSource] ?? identities.copilot.tokenSource}`,
+                )
+              : null,
         )
       : null,
   );

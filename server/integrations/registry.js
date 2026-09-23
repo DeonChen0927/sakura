@@ -10,6 +10,9 @@ import { settingsService, SettingKey } from '../services/settingsService.js';
 export const CredentialName = {
   BITBUCKET: 'bitbucket.token',
   JIRA: 'jira.token',
+  // Copilot CLI 的认证凭据：CLI 自身登录态不可用时，由 Sakura 注入 COPILOT_GITHUB_TOKEN，
+  // 避免「换个终端启动服务就报未认证」。
+  COPILOT: 'copilot.token',
 };
 
 let cache = { mode: null, clients: null };
@@ -38,6 +41,7 @@ export function getClients({ force = false } = {}) {
           copilot: createLiveCopilotClient({
             binary: settingsService.get(SettingKey.COPILOT_BINARY),
             getModelCatalog: () => settingsService.modelCatalog(),
+            getToken: () => credentialStore.get(CredentialName.COPILOT),
           }),
         }
       : {

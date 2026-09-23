@@ -36,7 +36,11 @@ export function createMockCopilotClient() {
     modelSource: { enumerable: true, note: '演示模式：内置模型列表，未调用本机 Copilot CLI。' },
 
     async getIdentity() {
-      return { loggedIn: true, account: 'demo-local-user', demo: true };
+      return { loggedIn: true, account: 'demo-local-user', tokenSource: 'demo', demo: true };
+    },
+
+    async checkAuth() {
+      return { ok: true, tokenSource: 'demo', detail: '演示模式：未调用本机 Copilot CLI。' };
     },
 
     async listModels() {

@@ -10,6 +10,36 @@ const execFileAsync = promisify(execFile);
 /** 模型不可用时 CLI 的报错特征（实测：`Error: Model "x" from --model flag is not available.`）。 */
 const MODEL_REJECTED_RE = /model\s+"[^"]*"[^\n]*not available|unknown model/i;
 
+/** CLI 未认证时的报错特征（实测 1.0.87：退出码 1，stderr 首行即此句）。 */
+const AUTH_MISSING_RE = /no authentication information found|not (?:logged in|authenticated)|please (?:run|use) .*\/login/i;
+
+const AUTH_REMEDY =
+  '本机 Copilot CLI 没有可用的登录凭据。二选一：①在「连接设置 → Copilot」录入 GitHub Token，' +
+  'Sakura 会加密保存并在启动 CLI 时注入；②在终端运行 copilot 后执行 /login 完成登录，再重启 Sakura。';
+
+const authError = (stderr) =>
+  new AppError(ErrorKind.PRECONDITION, 'Copilot CLI 未认证，无法调用模型', {
+    remedy: AUTH_REMEDY,
+    details: { stderr: String(stderr ?? '').trim().slice(0, 300) },
+  });
+
+const TOKEN_SOURCE_LABEL = {
+  sakura: 'Sakura 加密保存的 Token',
+  environment: '启动进程的环境变量',
+  cli_login: 'CLI 自身的登录态',
+};
+
+/**
+ * 归类 CLI 的失败原因。未认证与模型不可用必须分开：混为一谈会让人去反复换模型，
+ * 怎么换都失败（实测 1.0.87 未认证时退出码 1，stderr 首行为 No authentication information found）。
+ */
+export function classifyCliFailure(stderr) {
+  const text = String(stderr ?? '');
+  if (AUTH_MISSING_RE.test(text)) return 'auth';
+  if (MODEL_REJECTED_RE.test(text)) return 'model';
+  return null;
+}
+
 /** CLI 未提供模型枚举命令（实测 1.0.84：无 models/list-models 子命令）。 */
 const MODEL_SOURCE = {
   enumerable: false,
@@ -31,12 +61,26 @@ export function createLiveCopilotClient({
   timeoutMs = 15 * 60 * 1000,
   probeTimeoutMs = 90 * 1000,
   getModelCatalog = () => [],
+  getToken = async () => null,
 } = {}) {
+  /**
+   * CLI 认证来源：优先用 Sakura 加密保管的 Token 注入 COPILOT_GITHUB_TOKEN，
+   * 否则沿用启动 Sakura 的进程环境。后者取决于谁启动了服务，不同终端结果不同 ——
+   * 这正是「换个终端启动就报未认证」的根因，所以要允许显式注入。
+   */
+  async function spawnEnv() {
+    const token = await getToken().catch(() => null);
+    if (!token) return { env: process.env, tokenInjected: false };
+    return { env: { ...process.env, COPILOT_GITHUB_TOKEN: token }, tokenInjected: true };
+  }
+
   async function cli(args, options = {}) {
+    const { env } = await spawnEnv();
     try {
       return await execFileAsync(binary, args, {
         maxBuffer: 32 * 1024 * 1024,
         windowsHide: true,
+        env,
         ...options,
       });
     } catch (cause) {
@@ -46,8 +90,61 @@ export function createLiveCopilotClient({
           cause,
         });
       }
+      if (classifyCliFailure(cause.stderr) === 'auth') throw authError(cause.stderr);
       throw new AppError(ErrorKind.UPSTREAM, `Copilot CLI 调用失败：${cause.message}`, { cause });
     }
+  }
+
+  /**
+   * 通用会话探测：启动一次非交互会话，读到会话就绪事件即视为成功并立即终止子进程
+   * （在模型调用发起之前，不消耗额外配额）。未认证 / 模型被拒都会走 stderr。
+   */
+  async function runProbe(extraArgs) {
+    const { env, tokenInjected } = await spawnEnv();
+    const child = spawn(binary, [...extraArgs, '-p', 'ping', '--output-format', 'json'], {
+      windowsHide: true,
+      env,
+    });
+
+    let accepted = false;
+    let stderr = '';
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, probeTimeoutMs);
+
+    const splitter = createLineSplitter((line) => {
+      const event = parseEventLine(line);
+      if (!event) return;
+      if (event.type === 'session.tools_updated' || event.type === 'user.message') {
+        accepted = true;
+        child.kill('SIGKILL');
+      }
+    });
+
+    child.stdout.on('data', (chunk) => splitter.push(chunk));
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+
+    const exitCode = await new Promise((resolve, reject) => {
+      child.on('error', (error) => {
+        reject(
+          error.code === 'ENOENT'
+            ? new AppError(ErrorKind.PRECONDITION, `未找到 Copilot CLI（${binary}）`, {
+                remedy: '请确认本机已安装并登录 Copilot CLI。',
+                cause: error,
+              })
+            : error,
+        );
+      });
+      child.on('close', resolve);
+    }).finally(() => clearTimeout(timer));
+
+    splitter.flush();
+    return { accepted, stderr, exitCode, timedOut, tokenInjected };
   }
 
   return {
@@ -57,7 +154,49 @@ export function createLiveCopilotClient({
 
     async getIdentity() {
       const { stdout } = await cli(['--version']);
-      return { loggedIn: null, version: stdout.trim(), demo: false };
+      const auth = await this.checkAuth();
+      return {
+        // --version 在未认证时同样成功，所以登录状态必须单独探测，不能默认 true。
+        loggedIn: auth.ok,
+        authDetail: auth.detail,
+        tokenSource: auth.tokenSource,
+        // --version 后面还会跟一行升级提示，只取版本本身。
+        version: stdout.trim().split('\n')[0].trim(),
+        demo: false,
+      };
+    },
+
+    /**
+     * 真实探测 CLI 是否具备可用凭据：启动一次非交互会话，读到会话就绪事件即认定已认证，
+     * 并在模型调用前终止子进程。未认证时 CLI 立即以退出码 1 失败，因此这次探测很快。
+     */
+    async checkAuth() {
+      const model = getModelCatalog().find((entry) => entry.check?.status === 'available');
+      const probe = await runProbe(model ? ['--model', model.id] : []);
+      const tokenSource = probe.tokenInjected
+        ? 'sakura'
+        : process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN
+          ? 'environment'
+          : 'cli_login';
+
+      if (probe.accepted) {
+        return { ok: true, tokenSource, detail: 'CLI 已接受凭据并创建会话。' };
+      }
+      if (classifyCliFailure(probe.stderr) === 'auth') {
+        return {
+          ok: false,
+          tokenSource,
+          detail: probe.stderr.trim().split('\n')[0].slice(0, 300),
+          remedy: AUTH_REMEDY,
+        };
+      }
+      return {
+        ok: null,
+        tokenSource,
+        detail: probe.timedOut
+          ? `认证探测超时（${Math.round(probeTimeoutMs / 1000)} 秒）`
+          : `认证探测未得到明确结论（退出码 ${probe.exitCode}）：${probe.stderr.trim().slice(0, 200) || '无错误输出'}`,
+      };
     },
 
     /**
@@ -83,53 +222,14 @@ export function createLiveCopilotClient({
       const id = String(modelId ?? '').trim();
       if (!id) throw new AppError(ErrorKind.VALIDATION, '模型 ID 不能为空');
 
-      const child = spawn(binary, ['--model', id, '-p', 'ping', '--output-format', 'json'], {
-        windowsHide: true,
-      });
-
-      let accepted = false;
-      let stderr = '';
-      let timedOut = false;
-
-      const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill('SIGKILL');
-      }, probeTimeoutMs);
-
-      const splitter = createLineSplitter((line) => {
-        const event = parseEventLine(line);
-        if (!event) return;
-        if (event.type === 'session.tools_updated' || event.type === 'user.message') {
-          accepted = true;
-          child.kill('SIGKILL');
-        }
-      });
-
-      child.stdout.on('data', (chunk) => splitter.push(chunk));
-      child.stderr.on('data', (chunk) => {
-        stderr += chunk;
-      });
-
-      const exitCode = await new Promise((resolve, reject) => {
-        child.on('error', (error) => {
-          reject(
-            error.code === 'ENOENT'
-              ? new AppError(ErrorKind.PRECONDITION, `未找到 Copilot CLI（${binary}）`, {
-                  remedy: '请确认本机已安装并登录 Copilot CLI。',
-                  cause: error,
-                })
-              : error,
-          );
-        });
-        child.on('close', resolve);
-      }).finally(() => clearTimeout(timer));
-
-      splitter.flush();
+      const { accepted, stderr, exitCode, timedOut } = await runProbe(['--model', id]);
 
       if (accepted) {
         return { id, status: 'available', detail: 'CLI 已接受该模型并创建会话（探测在模型调用前终止）。' };
       }
-      if (MODEL_REJECTED_RE.test(stderr)) {
+      // 未认证不是“模型不可用”：混为一谈会让人去换模型，怎么换都失败。
+      if (classifyCliFailure(stderr) === 'auth') throw authError(stderr);
+      if (classifyCliFailure(stderr) === 'model') {
         return { id, status: 'unavailable', detail: stderr.trim().split('\n')[0].slice(0, 300) };
       }
       if (timedOut) {
@@ -144,10 +244,15 @@ export function createLiveCopilotClient({
 
     async testConnection() {
       const identity = await this.getIdentity();
+      if (identity.loggedIn === false) throw authError(identity.authDetail);
       return {
         ok: true,
         demo: false,
-        detail: `已检测到 Copilot CLI ${identity.version}；模型可用性需在启动评审时实际校验。`,
+        detail:
+          `已检测到 Copilot CLI ${identity.version}` +
+          `，凭据来源：${TOKEN_SOURCE_LABEL[identity.tokenSource] ?? identity.tokenSource}` +
+          (identity.loggedIn ? '；' : '（登录状态未确认）；') +
+          '模型可用性需在启动评审时实际校验。',
       };
     },
 
@@ -165,7 +270,8 @@ export function createLiveCopilotClient({
 
       onEvent?.({ stage: 'session_created', message: `启动 Copilot CLI（模型 ${model.id}）` });
 
-      const child = spawn(binary, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      const { env } = await spawnEnv();
+      const child = spawn(binary, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env });
       child.stdin.on('error', () => {
         // 子进程被取消/超时杀掉时 stdin 会 EPIPE，这里不应压过真正的失败原因
       });
@@ -215,7 +321,8 @@ export function createLiveCopilotClient({
       }
       if (exitCode !== 0) {
         logger.warn('Copilot CLI 非零退出', { exitCode, stderr: stderr.slice(0, 1000) });
-        if (MODEL_REJECTED_RE.test(stderr)) {
+        if (classifyCliFailure(stderr) === 'auth') throw authError(stderr);
+        if (classifyCliFailure(stderr) === 'model') {
           throw new AppError(ErrorKind.PRECONDITION, `所选模型不可用：${model.id}`, {
             remedy: '请在连接设置中重新验证并选择可用模型；系统不会自动改用其他模型。',
             details: { exitCode, stderr: stderr.trim().slice(0, 300) },

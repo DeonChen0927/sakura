@@ -29,6 +29,7 @@ export const connectionService = {
       credentials: {
         bitbucket: credentialStore.status(CredentialName.BITBUCKET),
         jira: credentialStore.status(CredentialName.JIRA),
+        copilot: credentialStore.status(CredentialName.COPILOT),
       },
       jira: { ...settingsService.get(SettingKey.JIRA), token: undefined },
       bitbucket: { ...settingsService.get(SettingKey.BITBUCKET), token: undefined },
